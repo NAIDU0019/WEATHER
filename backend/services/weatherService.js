@@ -3,10 +3,10 @@ const Weather = require('../models/Weather');
 const DailySummary = require('../models/DailySummary');
 require('dotenv').config();
 
-const fetchWeather = async (city) => {
+const fetchWeather = async (city, unit = 'metric') => {
   try {
     const { data } = await axios.get(`https://api.openweathermap.org/data/2.5/weather`, {
-      params: { q: city, appid: process.env.OPENWEATHER_API_KEY, units: 'metric' },
+      params: { q: city, appid: process.env.OPENWEATHER_API_KEY, units: unit },
     });
     return {
       city,
@@ -25,11 +25,20 @@ const fetchWeather = async (city) => {
 
 // In backend/services/weatherService.js
 
-const validateAndFormatWeatherData = (weatherData) => {
+const validateAndFormatWeatherData = (weatherData, unit = 'metric') => {
+  if (!weatherData || !Array.isArray(weatherData)) {
+    console.warn('Invalid weather data received:', weatherData);
+    return [];
+  }
+  
   return weatherData.filter(Boolean).map(data => {
-    const convertTemp = (temp) => {
+    const convertTemp = (temp, unit) => {
       if (typeof temp !== 'number' || isNaN(temp)) return null;
-      return temp > 100 ? temp - 273.15 : temp;
+      if (unit === 'imperial') {
+        return (temp * 9/5) + 32; // Celsius to Fahrenheit
+      } else {
+        return temp; // Already in Celsius
+      }
     };
 
     const formatDate = (timestamp) => {
@@ -39,11 +48,11 @@ const validateAndFormatWeatherData = (weatherData) => {
       return timestamp.toISOString().split('T')[0];
     };
 
-    const temperature = convertTemp(data.temperature);
-    const feelsLike = convertTemp(data.feelsLike);
+    const temperature = convertTemp(data.temperature, unit);
+    const feelsLike = convertTemp(data.feelsLike, unit);
     const formattedDate = formatDate(data.timestamp);
 
-    if (temperature === null || feelsLike === null || formattedDate === null || !data.city) {
+    if (temperature === null || !data.city) {
       console.warn(`Invalid data:`, { city: data.city, temperature, feelsLike, formattedDate });
       return null;
     }
@@ -52,10 +61,32 @@ const validateAndFormatWeatherData = (weatherData) => {
       ...data,
       city: data.city,
       temperature,
-      feelsLike,
+      feelsLike: feelsLike || temperature, // Use temperature if feelsLike is not available
       timestamp: formattedDate
     };
   }).filter(Boolean);
+};
+
+const fetchWeatherDataAndStore = async (unit = 'metric') => {
+  try {
+    const cities = ['City1', 'City2']; // Add your list of cities here
+    const weatherData = await Promise.all(cities.map(city => fetchWeather(city, unit)));
+    
+    if (!weatherData || weatherData.length === 0) {
+      console.warn('No weather data fetched');
+      return;
+    }
+
+    const validatedData = validateAndFormatWeatherData(weatherData, unit);
+    if (validatedData.length > 0) {
+      await Weather.insertMany(validatedData);
+      console.log('Weather data stored successfully');
+    } else {
+      console.warn('No valid weather data to store');
+    }
+  } catch (error) {
+    console.error('Error fetching weather data:', error);
+  }
 };
 
 const calculateDailySummaries = async () => {
@@ -101,9 +132,7 @@ const calculateDailySummaries = async () => {
   } catch (error) {
     console.error('Error calculating daily summaries:', error);
   }
-}; // Remove null values
-
-   
+};
 
 const logInvalidData = (weatherData) => {
   const invalidData = weatherData.filter(data => 
@@ -114,18 +143,6 @@ const logInvalidData = (weatherData) => {
   if (invalidData.length > 0) {
     console.warn('Invalid weather data detected:');
     console.warn(JSON.stringify(invalidData, null, 2));
-  }
-};
-const fetchWeatherDataAndStore = async () => {
-  const cities = ['Delhi', 'Mumbai', 'Chennai', 'Bangalore', 'Kolkata', 'Hyderabad'];
-  const weatherData = await Promise.all(cities.map((city) => fetchWeather(city)));
-  const validatedWeatherData = validateAndFormatWeatherData(weatherData);
-  logInvalidData(validatedWeatherData);
-  if (validatedWeatherData.length > 0) {
-    await Weather.insertMany(validatedWeatherData);
-    await calculateDailySummaries();
-  } else {
-    console.error('No valid weather data to store');
   }
 };
 

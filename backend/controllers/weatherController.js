@@ -15,6 +15,5 @@ async function getWeatherData(req, res) {
 }
 
 
-
-module.exports = { getWeatherData };
+module.exports = { convertKelvinToCelsius, getWeatherData };
 
